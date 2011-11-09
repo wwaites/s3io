@@ -18,6 +18,7 @@ type S3IO struct {
 	s3path string
 	command *exec.Cmd
 	log *log.Logger
+	Meta string `json:"uri"`
 	Program string `json:"program"`
 	Arguments []string `json:"arguments"`
 	Start string `json:"start"`
@@ -53,11 +54,12 @@ func (s3io *S3IO) vtemp() (tempfile *os.File, err os.Error) {
 	return
 }
 
-func (s3io *S3IO) Run() (err os.Error) {
+func (s3io *S3IO) Run() (meta []byte, err os.Error) {
 	s3io.Start = time.UTC().Format(time.RFC3339)
 	defer func() {
 		s3io.Finish = time.UTC().Format(time.RFC3339)
-		meta, err := json.Marshal(s3io)
+		s3io.Meta = s3io.bucket.Region.S3Endpoint + "/" + s3io.bucket.Name + s3io.s3path
+		meta, err = json.Marshal(s3io)
 		if err != nil {
 			log.Print(err)
 			return
@@ -89,45 +91,33 @@ func (s3io *S3IO) Run() (err os.Error) {
 	doneerr := make(chan bool)
 
 	go func() {
-		log.Print("copying stdout...")
 		if _, err := io.Copy(tmpout, stdout); err != nil {
 			log.Print(err)
 		}
 		//tmpout.Flush()
 		doneout <-true
-		log.Print("done copying stdout...")
 	}()
 
 	journal, stamped := io.Pipe()
 	go func() {
-		log.Print("stamping stderr...")
 		if err := Stamp(stamped, stderr); err != nil {
 			log.Print(err)
 		}
-		log.Print("done stamping...")
 	}()
 	go func() {
-		log.Print("copying stderr")
 		if _, err := io.Copy(tmperr, journal); err != nil {
 			log.Print(err)
 		}
 		//tmperr.Flush()
 		doneerr <-true
-		log.Print("done copying stderr")
 	}()
 
-	log.Print("running command")
 	childErr := s3io.command.Run()
-	log.Print("command returned")
 
-	log.Print("waiting on capture of output...")
 	_ =<-doneout
-	log.Print("now waiting on capture of error...")
 	_ =<-doneerr
-	log.Print("output captured")
 
 	go func() {
-		log.Print("saving output")
 		outpath := path.Join(s3io.s3path, "stdout")
 		s3io.Stdout = s3io.bucket.Region.S3Endpoint + "/" + s3io.bucket.Name + outpath
 		err := s3io.Save(tmpout, outpath)
@@ -135,10 +125,8 @@ func (s3io *S3IO) Run() (err os.Error) {
 			log.Print(err)
 		}
 		doneout<-true
-		log.Print("done saving output")
 	}()
 	go func() {
-		log.Print("saving error")
 		errpath := path.Join(s3io.s3path, "stderr")
 		s3io.Stderr = s3io.bucket.Region.S3Endpoint + "/" + s3io.bucket.Name + errpath
 		err := s3io.Save(tmperr, errpath)
@@ -146,14 +134,10 @@ func (s3io *S3IO) Run() (err os.Error) {
 			log.Print(err)
 		}
 		doneerr<-true
-		log.Print("done saving error")
 	}()
 
-	log.Print("waiting on save of output")
 	_ =<-doneout
-	log.Print("now waiting on save of error")
 	_ =<-doneerr
-	log.Print("done waiting")
 
 	err = childErr
 	return

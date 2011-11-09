@@ -101,8 +101,10 @@ func main() {
 		s3io.SetStdin(os.Stdin)
 	}
 
-	err = s3io.Run()
+	meta, err := s3io.Run()
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	os.Stdout.Write(meta)
 }
